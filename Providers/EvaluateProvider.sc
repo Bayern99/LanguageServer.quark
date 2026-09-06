@@ -69,7 +69,9 @@ EvaluateProvider : LSPProvider {
                     result.printOn(stream); 
                 }, resultStringLimit);
                 
-                if (resultStringLimit.size >= resultStringLimit, { ^(result ++ "...etc..."); });
+                if (result.size >= resultStringLimit, {
+                    result = result ++ "...etc...";
+                });
                 if (postResult) {
                     resultPrefix.post;
                     result.postln;
