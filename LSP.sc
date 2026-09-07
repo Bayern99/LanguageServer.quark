@@ -2,6 +2,7 @@ LSPConnection {
     classvar <connection;
     classvar <providers, <>preprocessor;
     classvar readyMsg = "***LSP READY***";
+    classvar failedMsg = "***LSP FAILED***";
     classvar <handlerThread;
     
     var <>inPort, <>outPort;
@@ -85,27 +86,48 @@ LSPConnection {
     start {
         // @TODO: What do we do before start / after stop? Errors?
         Log('LanguageServer.quark').info("Starting language server, inPort: % outPort:%", inPort, outPort);
-        
-        3.do {
-            try {
-                socket = socket ?? { NetAddr("127.0.0.1", outPort) };
-                thisProcess.openUDPPort(inPort, \raw);            
-            } {
-                Log('LanguageServer.quark').warning("Opening LSP port failed. Probably this is because an old scsynth process is holding onto the port. Killing old servers and trying again...");
-                Server.killAll();
-                0.5.wait();
+
+        // openUDPPort can return false without throwing. Retry locally; never
+        // Server.killAll — that would terminate other SC sessions on this machine.
+        Routine({
+            var opened = false;
+            3.do {
+                |i|
+                if (opened.not) {
+                    try {
+                        socket = socket ?? { NetAddr("127.0.0.1", outPort) };
+                        opened = thisProcess.openUDPPort(inPort, \raw) == true;
+                        if (opened.not) {
+                            Log('LanguageServer.quark').warning("Opening LSP port % failed (attempt % of 3).", inPort, i + 1);
+                        };
+                    } {
+                        |error|
+                        opened = false;
+                        Log('LanguageServer.quark').warning("Opening LSP port % raised (attempt % of 3): %", inPort, i + 1, error);
+                    };
+                    if (opened.not && (i < 2)) {
+                        0.5.wait;
+                    };
+                };
             };
-        };
-        
-        thisProcess.addRawRecvFunc({
-            |msg, time, replyAddr, recvPort|
-            this.prOnReceived(time, replyAddr, msg);
-        });
-        
-        // @TODO Is this the only "default" provider we want?
-        this.addProvider(InitializeProvider(this, {}));
-        
-        readyMsg.postln;
+
+            if (opened.not) {
+                Log('LanguageServer.quark').error("Language server failed to open UDP port %; not marking ready.", inPort);
+                failedMsg.postln;
+            } {
+                thisProcess.addRawRecvFunc({
+                    |msg, time, replyAddr, recvPort|
+                    this.prOnReceived(time, replyAddr, msg);
+                });
+
+                // @TODO Is this the only "default" provider we want?
+                this.addProvider(InitializeProvider(this, {}));
+
+                readyMsg.postln;
+            };
+        }).play(SystemClock);
+
+        ^this;
     }
     
     stop {
